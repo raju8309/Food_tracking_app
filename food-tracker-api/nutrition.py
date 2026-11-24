@@ -11,6 +11,7 @@ NUTRIENT_IDS = {
     1008: "calories", 2047: "calories", 2048: "calories",
     1003: "protein_g", 1004: "fat_g", 1005: "carbs_g",
 }
+NUTRIENT_KEYS = ["calories", "protein_g", "fat_g", "carbs_g"]
 
 LOCAL_FOODS = {
     "coffee":       {"calories": 1, "protein_g": 0.1, "fat_g": 0.0, "carbs_g": 0.0},
@@ -18,18 +19,23 @@ LOCAL_FOODS = {
     "tea":          {"calories": 1, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.2},
 }
 
+STOP_WORDS = {"with", "and", "of", "in", "on", "the", "a", "an", "style"}
+# Words that change calories a lot. Penalize them unless the user's food name has them.
+PREP_WORDS = {"fried", "creamed", "breaded", "battered", "tapenade", "dressing", "sauce",
+              "sweetened", "canned", "stuffed", "glazed", "candied", "dried", "pickled",
+              "luncheon", "meatless"}
+# Pure fats: never match these unless the food name itself says so
+REJECT_WORDS = {"oil", "dressing", "shortening", "lard", "margarine"}
+COOK_WORDS = {"cooked", "boiled", "steamed", "roasted", "grilled", "fried", "sauteed",
+              "baked", "scrambled", "stir", "curry", "masala"}
+
 
 def words(text):
     return set(re.findall(r"[a-z]+", text.lower()))
 
 
 def stems(text):
-    return {w.rstrip("s") for w in words(text)}
-
-
-def head_word(text):
-    ws = re.findall(r"[a-z]+", text.lower())
-    return ws[-1].rstrip("s") if ws else ""
+    return {w.rstrip("s") for w in words(text) if w not in STOP_WORDS}
 
 
 def is_branded(description):
@@ -38,9 +44,12 @@ def is_branded(description):
 
 def score(query, description):
     q, d = stems(query), stems(description)
-    overlap = len(q & d) / len(q)
-    head_bonus = 0.5 if head_word(query) in d else 0.0
-    return overlap + head_bonus - 0.02 * len(words(description))
+    s = len(q & d) / len(q)
+    s -= 0.3 * len(({w.rstrip("s") for w in PREP_WORDS} & d) - q)   # surprise prep words
+    if not (q & {w.rstrip("s") for w in COOK_WORDS}) and "raw" in d:
+        s += 0.2                                                     # plain food -> prefer raw
+    s -= 0.02 * len(words(description))                              # prefer simple names
+    return s
 
 
 @lru_cache(maxsize=1000)
@@ -48,16 +57,16 @@ def search_usda(food_name):
     body = {
         "query": food_name,
         "dataType": ["Foundation", "SR Legacy", "Survey (FNDDS)"],
-        "pageSize": 15,
+        "pageSize": 25,
     }
     resp = requests.post(SEARCH_URL, params={"api_key": USDA_KEY}, json=body, timeout=10)
     resp.raise_for_status()
     return resp.json().get("foods", [])
 
 
-def lookup_nutrition(food_name, min_overlap=0.5):
+def lookup_nutrition(food_name):
     key = food_name.lower().strip()
-    if not key:
+    if not key or not stems(key):
         return None
     if key in LOCAL_FOODS:
         return {"matched": f"local: {key}", "per_100g": LOCAL_FOODS[key]}
@@ -68,18 +77,16 @@ def lookup_nutrition(food_name, min_overlap=0.5):
         print(f"USDA lookup failed for '{key}': {e}")
         return None
 
-    foods = [f for f in foods if not is_branded(f["description"])]
-    if not foods:
+    # Every word of the food name must appear (no more "strawberry salad" -> "Beef salad")
+    q = stems(key)
+    candidates = [f for f in foods
+                  if not is_branded(f["description"]) and q <= stems(f["description"])
+                  and not ((words(f["description"]) & REJECT_WORDS) - words(key))]
+    if not candidates:
         return None
 
-    best = max(foods, key=lambda f: score(key, f["description"]))
-    d = stems(best["description"])
-    if head_word(key) not in d:
-        return None
-    if len(stems(key) & d) / len(stems(key)) < min_overlap:
-        return None
-
-    per_100g = {"calories": 0.0, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.0}
+    best = max(candidates, key=lambda f: score(key, f["description"]))
+    per_100g = {k: 0.0 for k in NUTRIENT_KEYS}
     for n in best.get("foodNutrients", []):
         name = NUTRIENT_IDS.get(n.get("nutrientId"))
         if name and per_100g[name] == 0.0:
@@ -87,22 +94,58 @@ def lookup_nutrition(food_name, min_overlap=0.5):
     return {"matched": best["description"], "per_100g": per_100g}
 
 
-OIL_WORDS = {"fried", "sauteed", "stir", "oil", "roasted"}
+def from_ingredients(ingredients):
+    sums = {k: 0.0 for k in NUTRIENT_KEYS}
+    matched_grams = 0.0
+    used = []
+    for ing in ingredients or []:
+        grams = float(ing.get("grams") or 0)
+        if grams <= 0:
+            continue
+        info = lookup_nutrition(ing.get("name", ""))
+        if info is None:
+            continue
+        for k in NUTRIENT_KEYS:
+            sums[k] += info["per_100g"][k] * grams / 100
+        matched_grams += grams
+        used.append(ing["name"])
+    if matched_grams == 0:
+        return None
+    per_100g = {k: v * 100 / matched_grams for k, v in sums.items()}
+    return {"matched": "from ingredients: " + ", ".join(used), "per_100g": per_100g}
+
+
+def lookup_item(item):
+    """Dish name -> its ingredients -> alternative names."""
+    info = lookup_nutrition(item.get("food", ""))
+    if info:
+        return info
+    info = from_ingredients(item.get("ingredients"))
+    if info:
+        return info
+    for alt in item.get("alternatives") or []:
+        info = lookup_nutrition(alt)
+        if info:
+            return info
+    return None
 
 
 def calculate_meal(data):
-    totals = {"calories": 0.0, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.0}
+    totals = {k: 0.0 for k in NUTRIENT_KEYS}
     results = []
-    oil_already_counted = False
+    seen = set()
 
     for item in data["items"]:
-        info = lookup_nutrition(item["food"])
+        name = item.get("food", "").lower().strip()
+        if name in seen:            # same food listed twice -> skip the copy
+            continue
+        seen.add(name)
+
+        info = lookup_item(item)
         if info is None:
             results.append({"food": item["food"], "grams": item["grams"],
                             "error": "no good match - ask user"})
             continue
-        if words(info["matched"]) & OIL_WORDS:
-            oil_already_counted = True
 
         scale = item["grams"] / 100
         nutrients = {k: round(v * scale, 1) for k, v in info["per_100g"].items()}
@@ -111,9 +154,5 @@ def calculate_meal(data):
         results.append({"food": item["food"], "matched": info["matched"],
                         "grams": item["grams"], **nutrients})
 
-    if data.get("cooked_with_oil") and not oil_already_counted:
-        totals["calories"] += 120
-        totals["fat_g"] += 14
-        results.append({"food": "cooking oil (1 tbsp estimate)", "calories": 120, "fat_g": 14})
-
+    # No automatic oil: cooked USDA dishes already include fat, and the app has oil buttons.
     return results, {k: round(v, 1) for k, v in totals.items()}

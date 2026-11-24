@@ -9,33 +9,44 @@ from qwen_vl_utils import process_vision_info
 
 MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 
-FOOD_PROMPT = """You are an expert in Indian and international food. Look at this food image.
+FOOD_PROMPT = """You are a food recognition expert. Look at this food image.
 
 Return ONLY valid JSON, no other text, in exactly this format:
 {
   "items": [
     {
-      "food": "<most likely specific dish name>",
-      "alternatives": ["<2nd most likely dish>", "<3rd most likely dish>"],
-      "grams": <estimated weight as integer>,
+      "food": "<name of what you see>",
+      "alternatives": ["<2nd most likely>", "<3rd most likely>"],
+      "grams": <estimated weight of this item as integer>,
+      "ingredients": [
+        {"name": "<simple raw ingredient>", "grams": <integer>}
+      ],
       "confidence": "<high|medium|low>"
     }
   ],
   "cooked_with_oil": <true or false>
 }
 
-How to identify curries and gravies:
-- First look for visible pieces: egg, chicken, paneer, potato, chickpeas, fish, mutton.
-- Then look at the gravy: yellow and runny = dal; thick dark brown/red = masala curry;
-  orange and creamy = butter/makhani style; green = palak/spinach based.
-- Name the dish by its main piece + style, e.g. "egg curry", "chicken curry", "dal tadka".
+How to name food:
+- Name exactly what you see, in plain words: "olives", "steamed broccoli",
+  "scrambled eggs", "grilled chicken breast", "white rice", "avocado".
+- Use a named dish (e.g. "paneer butter masala", "dal tadka", "biryani", "dosa")
+  ONLY if you clearly see that dish. Never guess a dish name for plain food.
+- If the plate has separate foods, list each one separately.
+  Write "celery" and "olives", not "olives with celery".
+- List each food only once.
+
+Grams:
+- Estimate carefully. A dinner plate is about 26 cm wide, a bowl about 15 cm.
+- Give your best exact guess (e.g. 35, 140). Do not round to 50 or 100.
+
+Ingredients:
+- Main raw ingredients of each item with grams, plain names USDA knows:
+  "onion", "potato", "white rice", "egg", "chicken breast", "vegetable oil", "ghee".
+- Include cooking fat (oil, ghee, butter) only if the food is clearly cooked in it.
 
 Rules:
-- One entry per distinct food or drink item. Ignore plates, pans, utensils, and packaging.
-- Include drinks (juice, smoothie, coffee, tea, soda) as items too.
-- Be specific: "white rice" not "rice", "chicken sandwich" not "sandwich".
-- alternatives must be 2 OTHER dishes that look similar, most likely first.
-- Estimate grams for the portion visible. For drinks, estimate ml as grams.
+- Ignore plates, bowls, utensils, packaging. Include drinks.
 - Skip tiny garnishes and whole spices.
 """
 

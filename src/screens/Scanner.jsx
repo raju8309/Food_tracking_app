@@ -7,9 +7,10 @@ import { MiniRing } from "../components";
 import {
   OIL_OPTIONS, MACROS, toEditable, itemNutrients, sumMeal, mealLabel,
   resizeImage, canvasToBlob, analyzePhoto, lookupFood, pctOf, API_URL, USE_MOCK,
+  findMyFood, applyMyFood,
 } from "../lib";
 
-export default function Scanner({ goals, onBack, onSave }) {
+export default function Scanner({ goals, myFoods = [], onBack, onSave }) {
   const [preview, setPreview] = useState(null);
   const [thumb, setThumb] = useState(null);
   const [items, setItems] = useState(null);
@@ -18,16 +19,19 @@ export default function Scanner({ goals, onBack, onSave }) {
   const [slow, setSlow] = useState(false);
   const [error, setError] = useState(null);
 
-  // Wake up the GPU as soon as the scanner opens (while the user takes the photo)
   useEffect(() => {
     if (!USE_MOCK) fetch(`${API_URL}/health`).catch(() => {});
   }, []);
+
+  function withMyFood(it) {
+    const f = findMyFood(it.food, myFoods);
+    return f ? applyMyFood(it, f) : it;
+  }
 
   async function handlePhoto(e) {
     const file = e.target.files[0];
     e.target.value = "";
     if (!file) return;
-
     setItems(null);
     setError(null);
     setLoading(true);
@@ -37,11 +41,10 @@ export default function Scanner({ goals, onBack, onSave }) {
       const small = await resizeImage(file, 200);
       setPreview(big.toDataURL("image/jpeg", 0.85));
       setThumb(small.toDataURL("image/jpeg", 0.7));
-
       const data = await analyzePhoto(await canvasToBlob(big));
       const foods = data.items.filter((i) => !i.food.startsWith("cooking oil"));
-      setItems(foods.map(toEditable));
-      setOil(foods.length !== data.items.length ? 2 : 0);
+      setItems(foods.map(toEditable).map(withMyFood));
+      setOil(0);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -70,6 +73,13 @@ export default function Scanner({ goals, onBack, onSave }) {
   async function renameItem(index, newName) {
     const name = newName.trim();
     if (!name || name === items[index].food) return;
+    const mine = findMyFood(name, myFoods);
+    if (mine) {
+      setItems((prev) =>
+        prev.map((it, i) => (i === index ? applyMyFood({ ...it, food: name }, mine) : it))
+      );
+      return;
+    }
     try {
       const fresh = await lookupFood(name, items[index].grams);
       setItems((prev) =>
@@ -77,7 +87,7 @@ export default function Scanner({ goals, onBack, onSave }) {
           if (i !== index) return it;
           const alternatives = it.alternatives.filter((a) => a !== name);
           return fresh
-            ? { ...toEditable(fresh), alternatives }
+            ? { ...toEditable(fresh), alternatives, count: it.count }
             : { ...it, food: name, alternatives };
         })
       );
@@ -114,7 +124,6 @@ export default function Scanner({ goals, onBack, onSave }) {
       <div className="scan-frame">
         <span className="corner tl" /><span className="corner tr" />
         <span className="corner bl" /><span className="corner br" />
-
         {preview ? (
           <img src={preview} alt="your meal" className="scan-photo" />
         ) : (
@@ -123,9 +132,7 @@ export default function Scanner({ goals, onBack, onSave }) {
             <p>Point your camera at your plate</p>
           </div>
         )}
-
         {loading && <div className="scan-line" />}
-
         {items && (
           <div className="tags">
             {items.slice(0, 3).map((it, i) => (
@@ -202,7 +209,21 @@ export default function Scanner({ goals, onBack, onSave }) {
                 </span>
               </div>
 
-              {it.matched && <div className="matched">≈ {it.matched}</div>}
+              {it.matched && (
+                <div className={`matched ${it.myFood ? "mine" : ""}`}>
+                  {it.myFood ? it.matched : `≈ ${it.matched}`}
+                </div>
+              )}
+
+              {!it.unknown && (() => {
+                const n = itemNutrients(it);
+                return (
+                  <div className="item-macros">
+                    P {Math.round(n.protein_g)}g · C {Math.round(n.carbs_g)}g · F {Math.round(n.fat_g)}g
+                    {it.count ? ` · ${it.count} pcs` : ""}
+                  </div>
+                );
+              })()}
 
               {it.alternatives.length > 0 && (
                 <div className="alts">

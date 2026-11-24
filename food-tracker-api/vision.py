@@ -17,6 +17,7 @@ Return ONLY valid JSON, no other text, in exactly this format:
     {
       "food": "<name of what you see>",
       "alternatives": ["<2nd most likely>", "<3rd most likely>"],
+      "count": <ONLY for bread slices, rotis, chapatis, idlis, dosas, whole eggs: number of pieces; otherwise null>,
       "grams": <estimated weight of this item as integer>,
       "ingredients": [
         {"name": "<simple raw ingredient>", "grams": <integer>}
@@ -37,6 +38,11 @@ How to name food:
 - List each food only once.
 
 Grams:
+- ONLY for bread slices, rotis, chapatis, idlis, dosas and whole eggs: count every piece,
+  including pieces partly hidden under other food, then grams = count x piece weight
+  (bread slice ~30 g, roti ~40 g, idli ~40 g, dosa ~80 g, egg ~50 g).
+- For everything else (vegetables, olives, berries, rice, curries, salads) do NOT count pieces;
+  estimate the total weight of the portion directly. Small side portions are often 20-80 g.
 - Estimate carefully. A dinner plate is about 26 cm wide, a bowl about 15 cm.
 - Give your best exact guess (e.g. 35, 140). Do not round to 50 or 100.
 

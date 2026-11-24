@@ -4,6 +4,7 @@ import { NavBar } from "./components";
 import { DEFAULT_GOALS, load, save } from "./lib";
 import {
   supabase, fetchMeals, insertMeal, removeMeal, removeAllMeals, fetchProfile, saveProfile,
+  fetchMyFoods, insertMyFood, removeMyFood,
 } from "./db";
 import Onboarding from "./screens/Onboarding";
 import Login from "./screens/Login";
@@ -18,6 +19,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [meals, setMeals] = useState([]);
+  const [myFoods, setMyFoods] = useState([]);
   const [profile, setProfile] = useState({ name: "", goals: DEFAULT_GOALS });
   const [dataReady, setDataReady] = useState(false);
   const [error, setError] = useState(null);
@@ -43,9 +45,10 @@ export default function App() {
 
     (async () => {
       try {
-        const [m, p] = await Promise.all([fetchMeals(), fetchProfile()]);
+        const [m, p, f] = await Promise.all([fetchMeals(), fetchProfile(), fetchMyFoods()]);
         if (cancelled) return;
         setMeals(m);
+        setMyFoods(f);
         if (p) {
           setProfile(p);
         } else {
@@ -111,9 +114,32 @@ export default function App() {
     }
   }
 
+  async function addMyFood(food) {
+    try {
+      const saved = await insertMyFood(food);
+      setMyFoods((prev) => [...prev, saved].sort((a, b) => a.name.localeCompare(b.name)));
+      return true;
+    } catch (e) {
+      setError(e.message);
+      return false;
+    }
+  }
+
+  async function deleteMyFood(id) {
+    const before = myFoods;
+    setMyFoods((prev) => prev.filter((f) => f.id !== id));
+    try {
+      await removeMyFood(id);
+    } catch (e) {
+      setMyFoods(before);
+      setError(e.message);
+    }
+  }
+
   async function logout() {
     await supabase.auth.signOut();
     setMeals([]);
+    setMyFoods([]);
     setTab("home");
   }
 
@@ -124,7 +150,9 @@ export default function App() {
       )}
       {tab === "home" && <Dashboard meals={meals} profile={profile} onScan={() => setTab("scan")} onDelete={deleteMeal} />}
       {tab === "history" && <History meals={meals} goal={profile.goals.calories} onDelete={deleteMeal} />}
-      {tab === "scan" && <Scanner goals={profile.goals} onBack={() => setTab("home")} onSave={addMeal} />}
+      {tab === "scan" && (
+        <Scanner goals={profile.goals} myFoods={myFoods} onBack={() => setTab("home")} onSave={addMeal} />
+      )}
       {tab === "insights" && <Insights meals={meals} goals={profile.goals} />}
       {tab === "profile" && (
         <Profile
@@ -132,6 +160,9 @@ export default function App() {
           setProfile={setProfile}
           meals={meals}
           email={session.user.email}
+          myFoods={myFoods}
+          onAddFood={addMyFood}
+          onDeleteFood={deleteMyFood}
           onReset={resetMeals}
           onLogout={logout}
         />

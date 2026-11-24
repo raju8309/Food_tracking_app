@@ -70,3 +70,20 @@ export async function saveProfile(userId, profile) {
     .upsert({ id: userId, name: profile.name, ...profile.goals });
   if (error) throw error;
 }
+
+export async function fetchMyFoods() {
+  const { data, error } = await supabase.from("my_foods").select("*").order("name");
+  if (error) throw error;
+  return data;
+}
+
+export async function insertMyFood(food) {
+  const { data, error } = await supabase.from("my_foods").insert(food).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function removeMyFood(id) {
+  const { error } = await supabase.from("my_foods").delete().eq("id", id);
+  if (error) throw error;
+}

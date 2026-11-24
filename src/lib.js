@@ -43,6 +43,7 @@ export function toEditable(item) {
     unknown: !!item.error,
     alternatives: item.alternatives || [],
     matched: item.matched || "",
+    count: item.count || null,
   };
 }
 
@@ -155,4 +156,41 @@ export async function lookupFood(food, grams) {
   if (!res.ok) throw await readError(res);
   const data = await res.json();
   return data.items[0];
+}
+/* ---------- My Foods ---------- */
+
+const normWords = (t) =>
+  ((t || "").toLowerCase().match(/[a-z]+/g) || []).map((w) => w.replace(/s$/, ""));
+
+export function findMyFood(name, myFoods) {
+  const have = new Set(normWords(name));
+  let best = null;
+  let bestLen = 0;
+  for (const f of myFoods || []) {
+    const key = normWords(f.name.split("(")[0]);
+    if (key.length && key.every((w) => have.has(w)) && key.length > bestLen) {
+      best = f;
+      bestLen = key.length;
+    }
+  }
+  return best;
+}
+
+export function applyMyFood(item, food) {
+  const count = item.count || null;
+  const pieceGrams = food.serving_grams || (count ? item.grams / count : item.grams) || 100;
+  const grams = food.serving_grams && count ? Math.round(count * food.serving_grams) : item.grams || pieceGrams;
+  return {
+    ...item,
+    grams,
+    unknown: false,
+    myFood: true,
+    per_g: {
+      calories: food.calories / pieceGrams,
+      protein_g: food.protein_g / pieceGrams,
+      carbs_g: food.carbs_g / pieceGrams,
+      fat_g: food.fat_g / pieceGrams,
+    },
+    matched: `✓ My food: ${food.name}` + (count ? ` · ${count} × ${food.serving}` : ""),
+  };
 }

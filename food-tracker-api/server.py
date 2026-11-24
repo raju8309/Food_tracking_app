@@ -47,8 +47,6 @@ def analyze(image: UploadFile = File(...)):
             raise HTTPException(status_code=502, detail="Model returned invalid output")
 
         items, totals = calculate_meal(data)
-        for item, original in zip(items, data["items"]):
-            item["alternatives"] = original.get("alternatives", [])
 
         return {
             "items": items,

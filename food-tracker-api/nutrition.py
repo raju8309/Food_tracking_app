@@ -38,7 +38,15 @@ def stems(text):
     return {w.rstrip("s") for w in words(text) if w not in STOP_WORDS}
 
 
+BRAND_WORDS = {"mcdonald", "mcdonalds", "burger king", "wendy", "subway", "kfc",
+               "taco bell", "starbucks", "domino", "pizza hut", "dunkin", "chick-fil-a",
+               "arby", "sonic", "popeyes", "chipotle", "panera"}
+
+
 def is_branded(description):
+    low = description.lower()
+    if any(b in low for b in BRAND_WORDS):
+        return True
     return any(w.isupper() and len(w) > 2 for w in re.findall(r"[A-Za-z]+", description))
 
 
@@ -48,6 +56,10 @@ def score(query, description):
     s -= 0.3 * len(({w.rstrip("s") for w in PREP_WORDS} & d) - q)   # surprise prep words
     if not (q & {w.rstrip("s") for w in COOK_WORDS}) and "raw" in d:
         s += 0.2                                                     # plain food -> prefer raw
+    q_phrase = " ".join(re.findall(r"[a-z]+", query.lower()))
+    d_text = " ".join(re.findall(r"[a-z]+", description.lower()))
+    if len(q_phrase.split()) > 1 and q_phrase in d_text:
+        s += 0.3                                                     # phrase bonus
     s -= 0.02 * len(words(description))                              # prefer simple names
     return s
 
@@ -109,7 +121,8 @@ def from_ingredients(ingredients):
             sums[k] += info["per_100g"][k] * grams / 100
         matched_grams += grams
         used.append(ing["name"])
-    if matched_grams == 0:
+    total_grams = sum(float(i.get("grams") or 0) for i in ingredients or [])
+    if matched_grams == 0 or matched_grams < 0.6 * total_grams:   # coverage check
         return None
     per_100g = {k: v * 100 / matched_grams for k, v in sums.items()}
     return {"matched": "from ingredients: " + ", ".join(used), "per_100g": per_100g}
@@ -143,7 +156,7 @@ def calculate_meal(data):
 
         info = lookup_item(item)
         if info is None:
-            results.append({"food": item["food"], "grams": item["grams"],
+            results.append({"food": item["food"], "grams": item["grams"], "alternatives": item.get("alternatives", []), "count": item.get("count"),
                             "error": "no good match - ask user"})
             continue
 
@@ -152,7 +165,7 @@ def calculate_meal(data):
         for k in totals:
             totals[k] += nutrients[k]
         results.append({"food": item["food"], "matched": info["matched"],
-                        "grams": item["grams"], **nutrients})
+                        "grams": item["grams"], "alternatives": item.get("alternatives", []), "count": item.get("count"), **nutrients})
 
     # No automatic oil: cooked USDA dishes already include fat, and the app has oil buttons.
     return results, {k: round(v, 1) for k, v in totals.items()}
